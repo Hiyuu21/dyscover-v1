@@ -12,6 +12,12 @@ from sklearn.preprocessing import StandardScaler, OneHotEncoder
 from sklearn.base import BaseEstimator, ClassifierMixin
 from pytorch_tabnet.tab_model import TabNetClassifier
 from sklearn.neural_network import MLPClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.naive_bayes import GaussianNB
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.svm import SVC
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.ensemble import RandomForestClassifier
 
 from nhanes import NHANES
 
@@ -24,15 +30,19 @@ def build_preprocessor(X, scale_type):
     valid_X = X.dropna(axis=1, how='all')
 
     # Find column types
-    numeric_cols = [col for col in valid_X.select_dtypes(include=['number']).columns if X[col].nunique() > 10]
-    categorical_cols = [col for col in  valid_X.select_dtypes(include=['object', 'category']).columns if X[col].nunique() <= 10]
+    numeric_cols, categorical_cols = [], []
+    for col in valid_X.columns:
+        is_numeric = pd.api.types.is_numeric_dtype(valid_X[col])
+        if is_numeric and valid_X[col].nunique() > 10:
+            numeric_cols.append(col)
+        elif valid_X[col].nunique() <= 10:
+            categorical_cols.append(col)
 
     # 1. Numeric: ONLY impute missing values so the math doesn't break
     num_steps = [('imputer', SimpleImputer(strategy='median'))]
 
     if scale_type == 'standard':
         num_steps.append(('scaler', StandardScaler()))
-
     numeric_transformer = Pipeline(steps=num_steps)
 
     # 2. Categorical: ONLY impute and translate to numbers
@@ -41,6 +51,7 @@ def build_preprocessor(X, scale_type):
         ('onehot', OneHotEncoder(handle_unknown='ignore', sparse_output=False))
     ])
 
+    print(f"numeric: {len(numeric_cols)}, categorical: {len(categorical_cols)}, total features: {X.shape[1]}")
     return ColumnTransformer(
         transformers=[
             ('num', numeric_transformer, numeric_cols),
@@ -80,27 +91,31 @@ class TabNet(ClassifierMixin, BaseEstimator):
         tags.estimator_type = "classifier"
         return tags
 
-def run_evaluation():
+def run_evaluation(force_rebuild = False):
     RANDOM_STATE = 42
     nh = NHANES()
 
     # Using your new loader that outputs flat matrices
-    X_train, X_test, y_train, y_test, df_1720, df_2123 = nh.load_data_a(force_rebuild=False)
-    model_1 = MLPClassifier(random_state=RANDOM_STATE, max_iter=5000)
-    model_2 = TabNet(seed=RANDOM_STATE, verbose=0)
+    X_train, X_test, y_train, y_test, df_1720, df_2123 = nh.load_data_a(force_rebuild=force_rebuild)
 
-    scale_1 = "standard"
-    scale_2 = "standard"
+    models = {
+        MLPClassifier(random_state=RANDOM_STATE, max_iter=1000, early_stopping=True):"standard",
+        TabNet(seed=RANDOM_STATE, verbose=0):"standard",
+        LogisticRegression(random_state=RANDOM_STATE, verbose=0, max_iter=1000):"standard",
+        GaussianNB():"standard",
+        KNeighborsClassifier():"standard",
+        SVC(random_state=RANDOM_STATE, verbose=0):"standard",
+        DecisionTreeClassifier(random_state=RANDOM_STATE):"none",
+        RandomForestClassifier(random_state=RANDOM_STATE, verbose=0):"none",
+    }
 
-    my_models = [(model_1, scale_1), (model_2, scale_2)]
     results = []
 
     # Part A Requirement: Robust Validation Strategy
     cv_strategy = RepeatedStratifiedKFold(n_splits=5, n_repeats=3, random_state=42)
+    all_folds = []
 
-    for current_model, current_scale in my_models:
-        if current_model is None:
-            continue
+    for current_model, current_scale in models.items():
 
         model_name = current_model.__class__.__name__
         print(f"\nEvaluating {model_name} on the full feature space...")
@@ -113,10 +128,12 @@ def run_evaluation():
         ])
 
         # Execute cross-validation on the entire X_train matrix
+        scoring = ["roc_auc", "average_precision", "precision", "recall", "f1"]
+
         cv_scores = cross_validate(
             pipe, X_train, y_train,
             cv=cv_strategy,
-            scoring=["roc_auc", "average_precision"],
+            scoring=scoring,
             n_jobs=max(1, os.cpu_count() - 2)
         )
 
@@ -126,24 +143,26 @@ def run_evaluation():
         pr_auc_std = cv_scores["test_average_precision"].std()
 
         print(
-            f"  Result: ROC-AUC = {roc_auc_mean:.4f} (±{roc_auc_std:.4f}) | PR-AUC = {pr_auc_mean:.4f} (±{pr_auc_std:.4f})")
+            f"--> Result: ROC-AUC = {roc_auc_mean:.4f} (±{roc_auc_std:.4f}) | PR-AUC = {pr_auc_mean:.4f} (±{pr_auc_std:.4f})")
 
-        results.append({
-            "Model": model_name,
-            "ROC_AUC_mean": roc_auc_mean,
-            "ROC_AUC_std": roc_auc_std,
-            "PR_AUC_mean": pr_auc_mean,
-            "PR_AUC_std": pr_auc_std
-        })
+        row = {"Model": model_name}
+        for m in scoring:
+            vals = cv_scores[f"test_{m}"]
+            row[f"{m}_mean"] = vals.mean().round(4)
+            row[f"{m}_std"] = vals.std().round(4)
+        results.append(row)
+
+        fold_scores = pd.DataFrame({m: cv_scores[f"test_{m}"] for m in scoring})
+        fold_scores.insert(0, "Model", model_name)
+        all_folds.append(fold_scores)
 
     # Save to CSV for team aggregation
     if results:
-        scorecard = pd.DataFrame(results).sort_values(by="ROC_AUC_mean", ascending=False)
-        tag = "_".join(r["Model"][:10] for r in results if r["Model"] is not None)
-        filename = f"{tag}_scorecard_A.csv"
-        scorecard.to_csv(filename, index=False)
-        print(f"\nSaved '{filename}'.")
+        scorecard = pd.DataFrame(results).sort_values(by="roc_auc_mean", ascending=False)
+        scorecard.to_csv("scorecard_A.csv", index=False)
+        pd.concat(all_folds, ignore_index=True).to_csv("per_fold_scores.csv", index=False)
+        print("\nSaved 'scorecard_A.csv' and 'per_fold_scores.csv'.")
 
 
 if __name__ == "__main__":
-    run_evaluation()
+    run_evaluation(force_rebuild=False)
