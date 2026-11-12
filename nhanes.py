@@ -314,7 +314,29 @@ class NHANES:
         return df
 
     def get_xy(self, df):
-        forbidden = ['LBXGH', 'LBXGLU', 'PHAFSTHR', 'SEQN', 'cycle', 'race_ethnicity', 'is_asian_descent']
+        forbidden = [
+            # --- leakage / identifiers / protected ---
+            'LBXGH', 'LBXGLU', 'PHAFSTHR',  # lab values that define the target
+            'SEQN', 'cycle', 'race_ethnicity', 'is_asian_descent',
+
+            # --- Survey design and weights (sampling, not health) ---
+            'WTINT2YR', 'WTMEC2YR', 'WTINTPRP', 'WTMECPRP', 'SDMVPSU', 'SDMVSTRA',
+
+            # --- Cycle-specific raw columns (only exist in one cycle) ---
+            'BPQ050A', 'BPQ040A', 'BPQ100D', 'BPQ090D',  # 2017-2020 only
+            'BPQ150', 'BPQ101D',  # 2021-2023 only
+            'DMDMARTL',  # old marital code, superseded
+
+            # --- OPTIONAL: raw inputs already summarised by a derived feature ---
+            # Remove this block if your team wants the literal "full feature space"
+            'BPXOSY1', 'BPXOSY2', 'BPXOSY3',  # -> systolic_bp_mean
+            'BPXODI1', 'BPXODI2', 'BPXODI3',  # -> diastolic_bp_mean
+            'MCQ160B', 'MCQ160C', 'MCQ160D', 'MCQ160E', 'MCQ160F',  # -> history_cvd
+            'SMQ020', 'SMQ040',  # -> smoking_status
+            'ALQ111', 'ALQ121', 'ALQ130',  # -> alcohol_drinks_on_drinking_days
+            'DMDMARTZ',  # -> marital_status (duplicate copy)
+            'BMXHT',  # -> waist_height_ratio
+        ]
         features = [
             c for c in df.columns
             if c!= self.config.target
