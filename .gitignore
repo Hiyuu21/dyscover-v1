@@ -1,0 +1,8 @@
+.venv/
+.idea/
+*.iml
+__pycache__/
+data/raw/
+data/cache/
+eda_out/
+*.feather
