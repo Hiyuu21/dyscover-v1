@@ -78,9 +78,9 @@ def step_data(args):
 def step_eda_pre(args):
     from eda import PreprocessEDA            # rename if your file has another name
 
-    X_train, _, y_train, *_ = load(args.rebuild)
+    X_train, X_test, y_train, *_ = load(args.rebuild)
     eda = PreprocessEDA(X_train, y_train, out_dir="eda_out/pre")
-    eda.run_all()
+    eda.run_all(X_test)
 
 
 def step_eda_post(args):
