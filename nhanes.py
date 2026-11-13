@@ -100,7 +100,6 @@ class Config:
         self.target = 'undiagnosed_dysglycemia'
 
 
-
 class NHANES:
     def __init__(self):
         self.config = Config()
