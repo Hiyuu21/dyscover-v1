@@ -19,6 +19,14 @@ from sklearn.svm import SVC
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.ensemble import RandomForestClassifier
 
+""" 
+TODO:
+ 1. robustness across distributions (cycle shift, subgroups)
+ 2. permutation importance, SHAP, visualisations
+ 3. confusion matrices, errors by subgroup (cross_val_predict)
+ 4. choose model by performance, effectiveness, interpretability and adaptability
+"""
+
 from nhanes import NHANES
 
 def build_preprocessor(X, scale_type):
